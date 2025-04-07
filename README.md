@@ -1,1 +1,3 @@
-# NoneBot V11 的自用插件
+# NoneBot2 的自用插件仓库
+
+> napcat + NoneBot2 V11
