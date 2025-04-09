@@ -337,6 +337,31 @@ async def get_moonshot_balance() -> Optional[float]:
         return None
 
 
+def is_supported_file_format(filename: str) -> bool:
+    """
+    检查文件格式是否被Kimi支持
+    
+    :param filename: 文件名
+    :return: 是否支持
+    """
+    # Kimi支持的文件扩展名列表
+    supported_formats = [
+        # 文档类
+        '.pdf', '.txt', '.csv', '.doc', '.docx', '.xls', '.xlsx', 
+        '.ppt', '.pptx', '.md', '.epub', '.html', '.json', '.mobi', 
+        # 日志和配置文件
+        '.log', '.yaml', '.yml', '.ini', '.conf',
+        # 代码类
+        '.go', '.h', '.c', '.cpp', '.cxx', '.cc', '.cs', '.java', 
+        '.js', '.css', '.jsp', '.php', '.py', '.py3', '.asp', '.ts', '.tsx'
+    ]
+    
+    # 提取文件扩展名（转为小写以便忽略大小写）
+    _, file_extension = os.path.splitext(filename.lower())
+    
+    return file_extension in supported_formats
+
+
 # 创建事件处理器
 file_analysis = on_command("解读", priority=5, rule=to_me())
 
@@ -407,6 +432,14 @@ async def _(bot: Bot, event: MessageEvent, state: T_State, args: Message = Comma
                 if seg.get('type', None) == "file":
                     file_name = seg.get("data").get("file").replace("/", "")
                     logger.debug(f"文件名: {file_name}")
+                    
+                    # 检查文件格式是否被支持
+                    if not is_supported_file_format(file_name):
+                        is_processing = False  # 重置处理标志
+                        await file_analysis.finish(MessageSegment.reply(event.message_id)
+                                                + MessageSegment.at(int(event.user_id))
+                                                + MessageSegment.text(f"错误：不支持的文件格式。\n当前支持的格式：PDF、文本文档、电子表格、幻灯片、代码文件等常见格式。"))
+                        return
                 else: 
                     is_processing = False  # 重置处理标志
                     await file_analysis.finish(MessageSegment.reply(event.message_id)
