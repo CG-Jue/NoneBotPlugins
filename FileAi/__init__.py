@@ -60,10 +60,11 @@ config = get_plugin_config(Config)
 
 DEFAULT_KIMI_API_BASE_URL = 'https://api.moonshot.cn/v1'  # 默认为空列表
 DEFAULT_KIMI_MODEL = "moonshot-v1-32k"  # 默认模型
-# 模型可选 moonshot-v1-128k、moonshot-v1-8k、moonshot-v1-32k
+# 模型可选 moonshot-v1-128k、moonshot-v1-8k、moonshot-v1-32k、moonshot-v1-auto
 
 # 可用的模型列表及说明
 MODEL_INFO = {
+    "moonshot-v1-auto": "自动选择模型，根据使用token数量自动选择最合适的模型",
     "moonshot-v1-128k": "大容量模型，最大支持128k上下文长度，适合处理大型文档",
     "moonshot-v1-32k": "标准模型，支持32k上下文长度，适合大多数场景",
     "moonshot-v1-8k": "轻量级模型，支持8k上下文长度，处理速度较快"
@@ -273,6 +274,9 @@ async def analyze_file_with_kimi(file_path: Path, filename: str, message: str) -
             logger.error(f"从Kimi API获取文件内容失败: {e}\n{error_detail}")
             return False, f"AI服务提取文件内容时出错: {str(e)}", kimi_file_id, None
         
+        if not message:
+            message = "请分析文件内容并总结要点"
+
         # 构建请求
         messages = [
             {
@@ -283,14 +287,14 @@ async def analyze_file_with_kimi(file_path: Path, filename: str, message: str) -
                 "role": "system",
                 "content": file_content,  # 文件内容
             },
-            {"role": "user", "content": f"请查找文件（{filename}）的内容，并且{message}"},
+            {"role": "user", "content": f"请基于文件（{filename}）的内容回答。{message}"},
         ]
         
         # 计算token数量
         token_count = await estimate_token_count(messages)
         logger.debug(f"消息的token数量: {token_count}")
         
-        # 调用API获取回答
+                # 调用API获取回答
         try:
             # 设置较长的超时时间
             completion = client.chat.completions.create(
