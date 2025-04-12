@@ -55,10 +55,10 @@ __plugin_meta__ = PluginMetadata(
     description="查询已安装的所有插件及其使用方法",
     usage="""
     查询插件列表:
-    - /插件信息: 获取所有带元数据的插件列表
+    - /菜单: 获取所有的插件列表
     
     查询具体插件:
-    - /插件信息 <插件名称>: 查询指定插件的详细信息
+    - /菜单 <插件名称>: 查询指定插件的详细信息
     
     超级用户命令:
     - /屏蔽插件 <插件名称>: 将插件从列表中隐藏
@@ -77,7 +77,7 @@ __plugin_meta__ = PluginMetadata(
 HIDDEN_PLUGINS_FILE = Path(os.path.dirname(os.path.abspath(__file__))) / "hidden_plugins.txt"
 
 # 命令注册
-findplugins = on_command("/插件信息", priority=1, block=True)
+findplugins = on_command("/菜单", priority=1, block=True)
 hide_plugin = on_command("/屏蔽插件", permission=SUPERUSER, priority=1, block=True)
 show_plugin = on_command("/取消屏蔽", permission=SUPERUSER, priority=1, block=True)
 
@@ -231,7 +231,7 @@ def format_all_plugin_list(plugin_list: List[Dict[str, str]]) -> str:
         status = "🔒" if plugin['is_hidden'] else "✅" 
         result += f"{i}. {status} {plugin['name']} - {plugin['description']}\n"
     
-    result += f"\n详细用法➡️「/插件信息 插件名」"
+    result += f"\n详细用法➡️「/菜单 插件名」"
     
     return result
 
@@ -283,7 +283,7 @@ async def handle_findplugins(event: MessageEvent, args: Message = CommandArg()):
         if plugin_info["name"] in hidden_plugins:
             # 对于非超级用户，被屏蔽的插件不可见
             if not is_superuser:
-                await findplugins.finish(f"未找到插件「{plugin_name}」的信息，请检查输入是否正确")
+                await findplugins.finish(f"未找到插件「{plugin_name}」的信息.")
             else:
                 # 超级用户可以看到被屏蔽的插件信息
                 result = format_plugin_detail(plugin_info)
@@ -295,7 +295,7 @@ async def handle_findplugins(event: MessageEvent, args: Message = CommandArg()):
             await findplugins.finish(result)
     else:
         # 插件不存在或没有元数据
-        await findplugins.finish(f"未找到插件「{plugin_name}」的信息，请检查输入是否正确")
+        await findplugins.finish(f"未找到插件「{plugin_name}」的信息.")
 
 @hide_plugin.handle()
 async def handle_hide_plugin(event: MessageEvent, args: Message = CommandArg()):
@@ -311,7 +311,7 @@ async def handle_hide_plugin(event: MessageEvent, args: Message = CommandArg()):
     # 验证插件是否存在
     plugin_info = get_plugin_detail(plugin_name)
     if not plugin_info:
-        await hide_plugin.finish(f"未找到插件「{plugin_name}」，请检查输入是否正确")
+        await hide_plugin.finish(f"未找到插件「{plugin_name}」.")
     
     # 插件存在，将其添加到屏蔽列表
     hidden_plugins = get_hidden_plugins()
