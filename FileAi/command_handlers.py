@@ -232,7 +232,7 @@ async def handle_help() -> str:
 
 async def handle_file_analysis_from_message(bot: Bot, event: MessageEvent, file_info: Dict[str, str], question: str) -> str:
     """
-    处理从消息中提取的文件分析命令
+    处理从消息中提取的文件分析命令，使用代理模式自动判断文件类型
     
     :param bot: 机器人实例
     :param event: 消息事件
@@ -240,131 +240,16 @@ async def handle_file_analysis_from_message(bot: Bot, event: MessageEvent, file_
     :param question: 用户问题
     :return: 回复消息
     """
-    # 开始计时
-    start_time = time.time()
-    
-    # 获取API密钥和基础URL
-    config_dict = get_plugin_config(Config)
-    
-    api_key = config_dict.CONFIG.get("kimi_api_key", "")
-    api_base_url = config_dict.CONFIG.get("kimi_api_base_url", "")
-    
-    if not api_key or not api_base_url:
-        return "API配置错误，请联系管理员设置正确的API密钥和地址"
-    
-    # 加载模型配置
-    model_manager = ModelManager()
-    current_model = model_manager.current_model
-    
-    # 获取文件名和ID
-    file_name = file_info.get('file_name', "未知文件")
-    file_id = file_info.get('file_id')
-    busid = file_info.get('busid', 0)
-    
-    if not file_id:
-        return "无法获取文件ID，请确保回复的消息中包含有效的文件"
-    
-    # 检查文件格式是否支持
-    if not is_supported_file_format(file_name):
-        return f"不支持的文件格式: {file_name}。请上传支持的文件类型，如PDF、DOC、TXT等常见文档格式。"
-    
-    # 创建API客户端
-    api_client = KimiApiClient(api_key, api_base_url)
-    
-    # 获取文件URL
     try:
-        # 如果是群消息，使用群ID
-        if isinstance(event, GroupMessageEvent):
-            group_id = event.group_id
-            file_url_info = await bot.call_api(
-                "get_group_file_url", 
-                group_id=group_id, 
-                file_id=file_id,
-                busid=busid
-            )
-        else:
-            # 私聊消息的处理逻辑
-            # 对于OneBot v11，私聊文件URL可能需要其他API
-            return "目前仅支持在群聊中分析文件"
+        # 使用文件处理代理类处理文件
+        from .file_processor_proxy import FileProcessorProxy
+        processor_proxy = FileProcessorProxy()
         
-        if 'url' not in file_url_info:
-            logger.error(f"获取文件URL失败，返回数据不包含url字段: {file_url_info}")
-            return "获取文件下载链接失败，无法获取有效的下载地址"
-
-        file_url = file_url_info['url']
-        logger.debug(f"文件下载URL: {file_url}")
+        # 调用代理类处理文件
+        result = await processor_proxy.process_file(bot, event, file_info, question)
+        
+        return result
+        
     except Exception as e:
-        logger.error(f"获取文件URL时出错: {e}")
-        return f"获取文件下载链接失败: {str(e)}"
-    
-    # 下载文件
-    local_file_path = None
-    kimi_file_id = None
-    
-    try:
-        await bot.send(event, f"正在处理文件: 《{file_name}》，请稍等...")
-        
-        # 下载文件到本地
-        local_file_path = await download_file(file_url, file_name)
-        
-        if not local_file_path:
-            return "下载文件失败，请检查文件是否存在或稍后再试"
-        
-        # 检查文件大小是否超过限制
-        file_size = os.path.getsize(local_file_path)
-        if file_size > MAX_FILE_SIZE_BYTES:
-            # 直接删除本地文件，避免使用cleanup_files
-            try:
-                os.remove(local_file_path)
-            except Exception as e:
-                logger.debug(f"删除过大文件时出错: {e}")
-            return f"文件过大（{file_size/1024/1024:.2f}MB），超过了大小限制（{MAX_FILE_SIZE_BYTES/1024/1024}MB）"
-        
-        # 使用API分析文件
-        success, result, kimi_file_id, token_count, model_used = await api_client.analyze_file(
-            file_path=local_file_path,
-            filename=file_name,
-            message=question,
-            model=current_model
-        )
-        
-        # 清理临时文件，但不传入client参数，避免FinishedException
-        try:
-            if local_file_path and os.path.exists(local_file_path):
-                os.remove(local_file_path)
-                logger.debug(f"成功删除本地临时文件: {local_file_path}")
-                
-            if kimi_file_id:
-                try:
-                    api_client.client.files.delete(file_id=kimi_file_id)
-                    logger.debug(f"成功删除Kimi API中的文件: {kimi_file_id}")
-                except Exception as e:
-                    logger.debug(f"删除Kimi API中的文件时出错: {e}")
-        except Exception as e:
-            logger.debug(f"删除临时文件时出错: {e}")
-        
-        # 计算处理时间
-        elapsed_time = time.time() - start_time
-        
-        # 查询余额
-        balance = await model_manager.get_moonshot_balance(api_key, api_base_url)
-        balance_str = f"¥{balance:.2f}" if balance is not None else "查询失败"
-        
-        if success:
-            # 准备回复
-            reply = f"文件「{file_name}」分析结果：\n------------------------\n\n{result}"
-            # 添加分隔符和统计信息
-            reply += f"\n\n------------------------\n耗时: {elapsed_time:.1f}s | 模型: {model_used} | token: {token_count or '未知'} | 余额: {balance_str}"
-            return reply
-        else:
-            return f"分析文件失败: {result}"
-            
-    except Exception as e:
-        # 确保资源被清理，但不使用可能导致FinishedException的方法
-        try:
-            if local_file_path and os.path.exists(local_file_path):
-                os.remove(local_file_path)
-        except Exception:
-            pass
         logger.error(f"文件分析过程中发生错误: {e}")
         return f"处理文件过程中出错: {str(e)}"
