@@ -10,7 +10,7 @@ from nonebot.exception import FinishedException
 from nonebot.params import CommandArg, ArgStr, ArgPlainText
 from nonebot.plugin import PluginMetadata
 from nonebot.permission import SUPERUSER
-
+from .rule import *
 from .config import Config
 from .models import ModelManager, MODEL_INFO, VISION_MODEL_INFO
 from .api_client import KimiApiClient
@@ -67,11 +67,11 @@ processing_lock = asyncio.Lock()
 is_processing = False
 
 # 创建事件处理器
-file_analyzer = on_command("分析文件", priority=5)
-image_analyzer = on_command("分析图片", priority=5)
-model_setter = on_command("设置模型", priority=5, permission=SUPERUSER)
-vision_model_setter = on_command("设置视觉模型", priority=5, permission=SUPERUSER)
-balance_checker = on_command("查询余额", priority=5, permission=SUPERUSER)
+file_analyzer = on_command("分析文件", priority=5, rule=check_if_403)
+image_analyzer = on_command("分析图片", priority=5, rule=check_if_403)
+model_setter = on_command("设置模型", priority=5, permission=SUPERUSER, rule=check_if_403)
+vision_model_setter = on_command("设置视觉模型", priority=5, permission=SUPERUSER, rule=check_if_403)
+balance_checker = on_command("查询余额", priority=5, permission=SUPERUSER, rule=check_if_403)
 
 @file_analyzer.handle()
 async def file_analyze_handler(bot: Bot, event: MessageEvent, args: Message = CommandArg()):

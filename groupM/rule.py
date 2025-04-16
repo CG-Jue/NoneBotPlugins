@@ -5,7 +5,8 @@ async def checkIfListenpro(event: GroupMessageEvent):
 
      
     templist = [445629724,391680981,915938735] # 群号列表
-    if event.group_id:
+    if event.get_event_name() == "message.group.normal":
+
     
         for id in templist:
             if id == event.group_id:
@@ -24,7 +25,8 @@ async def checkIfWWD(event: GroupMessageEvent):
     # print(event.get_event_description())
     templist = [629590326] # 群号列表
    
-    if event.group_id:
+    if event.get_event_name() == "message.group.normal":
+
         for id in templist:
             if id == event.group_id:
                 return True

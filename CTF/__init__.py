@@ -15,6 +15,7 @@ from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, Bot
 from nonebot.params import CommandArg
 from .config import Config
 from nonebot.plugin import PluginMetadata
+from .rule import *
 
 __plugin_meta__ = PluginMetadata(
     name="CTF比赛推送",
@@ -281,7 +282,7 @@ async def ctf_push_job():
             logger.debug(f"向群 {group_id} 发送消息失败: {e}")
 
 # 查询命令注册
-query_ctf = on_command("/查询赛事", priority=5)
+query_ctf = on_command("/查询赛事", priority=5, rule=check_if_403)
 
 def get_start_time(ctf: dict) -> datetime:
     """

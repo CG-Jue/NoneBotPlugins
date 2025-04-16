@@ -5,8 +5,9 @@
 3. 管理的群有人员变更
 4. 入群申请审核系统
 '''
-from nonebot import on_command, on_request, on_regex, on_message, logger, get_driver
+from nonebot import on_command, on_request, on_fullmatch, on_regex, on_notice, logger, get_driver
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GroupRequestEvent, FriendRequestEvent, MessageEvent, Message, MessageSegment
+from nonebot.adapters.onebot.v11 import GroupIncreaseNoticeEvent
 from nonebot.adapters.onebot.v11.permission import GROUP_ADMIN, GROUP_OWNER
 from nonebot.adapters.onebot.v11.event import Reply
 from nonebot.adapters.onebot.v11.message import MessageSegment as MS
@@ -25,26 +26,27 @@ from .rule import checkIfWWD
 
 __plugin_meta__ = PluginMetadata(
     name="群组与好友管理",
-    description="处理入群申请、好友申请、群成员变动等事件的管理插件",
+    description="处理群聊邀请、入群申请、好友申请等事件的审核插件",
     usage="""
     【管理员命令】(仅在审核群有效)
-    - 查看入群审核：显示所有待处理的入群申请
+    - 查看入群审核：显示所有待处理的入群申请和群聊邀请
     - 查看好友审核：显示所有待处理的好友申请(仅超管可用)
     - 查看所有审核：以合并转发方式显示所有待处理申请
     - /同意 [请求标识]：手动同意指定请求
     - /拒绝 [请求标识] [理由]：手动拒绝指定请求
     
     【审核流程】
-    1. 收到入群/好友申请时，消息会发送到审核群
+    1. 收到入群申请/群聊邀请/好友申请时，消息会发送到审核群
     2. 管理员可通过回复原消息"同意"或"拒绝 理由"来处理
-    3. 管理员也可通过命令"同意 请求标识"来处理
+    3. 管理员也可通过命令"/同意 请求标识"或"/拒绝 请求标识 理由"来处理
     4. 好友申请只能由超级管理员处理
+    5. 机器人被邀请进群的请求会显示特定的审核提示
     """,
     extra={
         "unique_name": "group_management",
         "example": "查看所有审核",
         "author": "dog",
-        "version": "1.1.0",
+        "version": "1.2.0",
     },
 )
 
@@ -174,6 +176,50 @@ async def gr_(bot: Bot, matcher: Matcher, event: GroupRequestEvent):
     sub_type = event.sub_type
     uid = event.user_id
     
+    # 只处理已知的请求类型，忽略未知类型
+    if sub_type not in ['invite', 'add']:
+        logger.warning(f"收到未知类型的群组请求: {sub_type}, flag: {flag}")
+        return
+    
+    # 处理被邀请进群的情况
+    if sub_type == 'invite':
+        # 发送给审核群
+        audit_msg = (
+            f"【收到新的入群邀请】\n"
+            f"邀请人: {uid}\n"
+            f"目标群组: {gid}\n"
+            f"请求标识: {flag}\n\n"
+            f"管理员回复本条消息「同意」或「拒绝 拒绝理由」进行处理"
+        )
+        
+        try:
+            # 尝试发送到审核群
+            msg_result = await bot.send_group_msg(group_id=AUDIT_GROUP_ID, message=audit_msg)
+            # 存储消息ID和请求信息的映射关系
+            message_id = msg_result['message_id']
+            
+            # 存储请求信息
+            pending_requests[flag] = {
+                'user_id': uid,
+                'group_id': gid,
+                'comment': "机器人被邀请进群",
+                'time': int(time.time()),
+                'message_id': message_id,
+                'sub_type': 'invite'  # 标记为邀请类型
+            }
+            # 建立消息ID到flag的映射
+            message_to_flag[message_id] = flag
+            # 标记请求类型
+            flag_type[flag] = 'group_invite'
+            save_data()
+            
+        except Exception as e:
+            # 发送失败，记录日志
+            logger.error(f"发送邀请审核消息失败: {e}")
+            await matcher.send(f"发送审核消息失败，请管理员手动处理该入群邀请")
+        return  # 处理完邀请请求后返回
+    
+    # 处理普通入群申请
     if sub_type == 'add':
         comment = event.comment
         word = re.findall(re.compile('答案：(.*)'), comment)
@@ -201,10 +247,13 @@ async def gr_(bot: Bot, matcher: Matcher, event: GroupRequestEvent):
                 'group_id': gid,
                 'comment': word,
                 'time': int(time.time()),
-                'message_id': message_id
+                'message_id': message_id,
+                'sub_type': 'add'  # 标记为普通入群申请
             }
             # 建立消息ID到flag的映射
             message_to_flag[message_id] = flag
+            # 标记请求类型
+            flag_type[flag] = 'group_add'
             save_data()
             
         except Exception as e:
@@ -213,7 +262,7 @@ async def gr_(bot: Bot, matcher: Matcher, event: GroupRequestEvent):
             await matcher.send(f"发送审核消息失败，请管理员手动处理该入群申请")
 
 # 通过回复消息处理入群申请
-reply_handler = on_message(rule=checkIfWWD,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2)
+reply_handler = on_fullmatch("同意",rule=checkIfWWD,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2)
 
 @reply_handler.handle()
 async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
@@ -241,9 +290,11 @@ async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
     if flag in pending_requests:  # 入群请求
         request_info = pending_requests[flag]
         request_type = 'group'
+        sub_type = request_info.get('sub_type', 'add')  # 获取子类型，默认为add
     elif flag in pending_friend_requests:  # 好友请求
         request_info = pending_friend_requests[flag]
         request_type = 'friend'
+        sub_type = 'add'  # 好友请求没有子类型，统一设为add
         # 好友请求只允许超级管理员处理
         if not await SUPERUSER(bot, event):
             await matcher.send("只有超级管理员才能处理好友请求")
@@ -254,9 +305,14 @@ async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
     if content.startswith("同意"):
         try:
             if request_type == 'group':
-                # 同意入群申请
-                await bot.set_group_add_request(flag=flag, sub_type="add", approve=True, reason=' ')
-                await matcher.send(f"已同意用户 {request_info['user_id']} 加入群 {request_info['group_id']}")
+                if sub_type == 'invite':
+                    # 同意邀请进群请求
+                    await bot.set_group_add_request(flag=flag, sub_type="invite", approve=True, reason=' ')
+                    await matcher.send(f"已同意接受用户 {request_info['user_id']} 的群聊邀请，已加入群 {request_info['group_id']}")
+                else:
+                    # 同意普通入群申请
+                    await bot.set_group_add_request(flag=flag, sub_type="add", approve=True, reason=' ')
+                    await matcher.send(f"已同意用户 {request_info['user_id']} 加入群 {request_info['group_id']}")
                 # 移除已处理的请求
                 pending_requests.pop(flag)
             else:  # friend
@@ -280,9 +336,14 @@ async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
         reason = content[2:].strip() if len(content) > 2 else "管理员拒绝"
         try:
             if request_type == 'group':
-                # 拒绝入群申请
-                await bot.set_group_add_request(flag=flag, sub_type="add", approve=False, reason=reason)
-                await matcher.send(f"已拒绝用户 {request_info['user_id']} 加入群 {request_info['group_id']}，理由: {reason}")
+                if sub_type == 'invite':
+                    # 拒绝邀请进群
+                    await bot.set_group_add_request(flag=flag, sub_type="invite", approve=False, reason=reason)
+                    await matcher.send(f"已拒绝接受用户 {request_info['user_id']} 的群聊邀请，群号: {request_info['group_id']}，理由: {reason}")
+                else:
+                    # 拒绝普通入群申请
+                    await bot.set_group_add_request(flag=flag, sub_type="add", approve=False, reason=reason)
+                    await matcher.send(f"已拒绝用户 {request_info['user_id']} 加入群 {request_info['group_id']}，理由: {reason}")
                 # 移除已处理的请求
                 pending_requests.pop(flag)
             else:  # friend
@@ -401,11 +462,20 @@ async def handle_list_all_requests(bot: Bot, event: MessageEvent, matcher: Match
         # 为每个入群请求创建一条消息
         for flag, request in pending_requests.items():
             time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(request['time']))
+            sub_type = request.get('sub_type', 'add')  # 获取子类型，默认为add
+            
+            # 根据请求类型创建不同的消息
+            if sub_type == 'invite':
+                req_type_text = "【群聊邀请】"
+                info_text = f"邀请人: {request['user_id']}\n目标群组: {request['group_id']}"
+            else:  # 'add'
+                req_type_text = "【入群申请】"
+                info_text = f"申请人: {request['user_id']}\n目标群组: {request['group_id']}\n验证信息: {request['comment']}"
+            
             msg_content = (
+                f"{req_type_text}\n"
+                f"{info_text}\n"
                 f"请求标识: {flag}\n"
-                f"申请人: {request['user_id']}\n"
-                f"目标群组: {request['group_id']}\n"
-                f"验证信息: {request['comment']}\n"
                 f"申请时间: {time_str}\n\n"
                 f"回复「同意 {flag}」或「拒绝 {flag} 原因」处理"
             )
@@ -435,9 +505,10 @@ async def handle_list_all_requests(bot: Bot, event: MessageEvent, matcher: Match
         for flag, request in pending_friend_requests.items():
             time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(request['time']))
             msg_content = (
-                f"请求标识: {flag}\n"
+                f"【好友申请】\n"
                 f"申请人: {request['user_id']}\n"
                 f"验证信息: {request['comment']}\n"
+                f"请求标识: {flag}\n"
                 f"申请时间: {time_str}\n\n"
                 f"回复「同意 {flag}」或「拒绝 {flag} 原因」处理"
             )
@@ -457,7 +528,7 @@ async def handle_list_all_requests(bot: Bot, event: MessageEvent, matcher: Match
         "data": {
             "name": "审核系统",
             "uin": bot_id,
-            "content": "✅ 使用说明：\n1. 回复消息「同意」或「拒绝 原因」\n2. 直接发送「同意 请求标识」\n3. 直接发送「拒绝 请求标识 原因」"
+            "content": "✅ 使用说明：\n1. 回复消息「同意」或「拒绝 原因」\n2. 直接发送「/同意 请求标识」\n3. 直接发送「/拒绝 请求标识 原因」"
         }
     })
     
@@ -469,11 +540,16 @@ async def handle_list_all_requests(bot: Bot, event: MessageEvent, matcher: Match
         # 私聊使用普通消息
         simple_msg = "当前待处理的请求如下，请在审核群中处理：\n\n"
         
-        if pending_requests:
-            simple_msg += f"入群请求: {len(pending_requests)}个\n"
-            
+        # 区分入群请求类型
+        add_requests = sum(1 for req in pending_requests.values() if req.get('sub_type', 'add') == 'add')
+        invite_requests = sum(1 for req in pending_requests.values() if req.get('sub_type') == 'invite')
+        
+        if add_requests > 0:
+            simple_msg += f"入群申请: {add_requests}个\n"
+        if invite_requests > 0:
+            simple_msg += f"群聊邀请: {invite_requests}个\n"
         if pending_friend_requests:
-            simple_msg += f"好友请求: {len(pending_friend_requests)}个\n"
+            simple_msg += f"好友申请: {len(pending_friend_requests)}个\n"
             
         await matcher.send(simple_msg)
 
@@ -498,7 +574,7 @@ async def fr_(bot: Bot, matcher: Matcher, event: FriendRequestEvent):
         f"请求标识: {flag}\n\n"
         f"超级管理员回复本条消息「同意」或「拒绝 拒绝理由」进行处理"
     )
-    
+
     try:
         # 尝试发送到审核群
         msg_result = await bot.send_group_msg(group_id=AUDIT_GROUP_ID, message=audit_msg)
@@ -538,6 +614,7 @@ async def handle_manual_approve(bot: Bot, event: MessageEvent, matcher: Matcher,
     args = str(event.message).strip().split(" ", 1)
     if len(args) != 2 or not args[1].strip():
         await matcher.send("格式错误，请使用：同意 [请求标识]")
+        
         return
     
     flag = args[1].strip()
@@ -546,6 +623,7 @@ async def handle_manual_approve(bot: Bot, event: MessageEvent, matcher: Matcher,
     if flag in pending_requests:  # 入群请求
         request_info = pending_requests[flag]
         request_type = 'group'
+        sub_type = request_info.get('sub_type', 'add')  # 获取子类型，默认为add
     elif flag in pending_friend_requests:  # 好友请求
         request_info = pending_friend_requests[flag]
         request_type = 'friend'
@@ -559,9 +637,14 @@ async def handle_manual_approve(bot: Bot, event: MessageEvent, matcher: Matcher,
     
     try:
         if request_type == 'group':
-            # 同意入群申请
-            await bot.set_group_add_request(flag=flag, sub_type="add", approve=True, reason=' ')
-            await matcher.send(f"已同意用户 {request_info['user_id']} 加入群 {request_info['group_id']}")
+            if sub_type == 'invite':
+                # 同意邀请进群请求
+                await bot.set_group_add_request(flag=flag, sub_type="invite", approve=True, reason=' ')
+                await matcher.send(f"已同意接受用户 {request_info['user_id']} 的群聊邀请，已加入群 {request_info['group_id']}")
+            else:
+                # 同意普通入群申请
+                await bot.set_group_add_request(flag=flag, sub_type="add", approve=True, reason=' ')
+                await matcher.send(f"已同意用户 {request_info['user_id']} 加入群 {request_info['group_id']}")
             
             # 如果该请求有关联的消息ID，也从映射中删除
             if 'message_id' in request_info:
@@ -621,6 +704,7 @@ async def handle_manual_reject(bot: Bot, event: MessageEvent, matcher: Matcher, 
     if flag in pending_requests:  # 入群请求
         request_info = pending_requests[flag]
         request_type = 'group'
+        sub_type = request_info.get('sub_type', 'add')  # 获取子类型，默认为add
     elif flag in pending_friend_requests:  # 好友请求
         request_info = pending_friend_requests[flag]
         request_type = 'friend'
@@ -634,9 +718,14 @@ async def handle_manual_reject(bot: Bot, event: MessageEvent, matcher: Matcher, 
     
     try:
         if request_type == 'group':
-            # 拒绝入群申请
-            await bot.set_group_add_request(flag=flag, sub_type="add", approve=False, reason=reason)
-            await matcher.send(f"已拒绝用户 {request_info['user_id']} 加入群 {request_info['group_id']}，理由: {reason}")
+            if sub_type == 'invite':
+                # 拒绝邀请进群请求
+                await bot.set_group_add_request(flag=flag, sub_type="invite", approve=False, reason=reason)
+                await matcher.send(f"已拒绝接受用户 {request_info['user_id']} 的群聊邀请，群号: {request_info['group_id']}，理由: {reason}")
+            else:
+                # 拒绝普通入群申请
+                await bot.set_group_add_request(flag=flag, sub_type="add", approve=False, reason=reason)
+                await matcher.send(f"已拒绝用户 {request_info['user_id']} 加入群 {request_info['group_id']}，理由: {reason}")
             
             # 如果该请求有关联的消息ID，也从映射中删除
             if 'message_id' in request_info:
@@ -670,3 +759,36 @@ async def handle_manual_reject(bot: Bot, event: MessageEvent, matcher: Matcher, 
     except Exception as e:
         logger.error(f"手动处理请求失败: {e}")
         await matcher.send(f"处理请求失败: {e}")
+
+# 处理群成员增加通知事件
+group_increase_notice = on_notice(priority=2, block=True)
+
+@group_increase_notice.handle()
+async def handle_group_increase_notice(bot: Bot, event: GroupIncreaseNoticeEvent):
+    group_id = event.group_id
+    user_id = event.user_id
+    sub_type = event.sub_type
+    operator_id = getattr(event, 'operator_id', None)
+    
+    # 判断是否为机器人被邀请进群的情况
+    if sub_type == "invite" and user_id == event.self_id:
+        # 发送通知消息到审核群
+        notice_msg = (
+            f"【机器人被邀请入群通知】\n"
+            f"机器人已被 {operator_id} 邀请加入群 {group_id}\n"
+            f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        )
+    else:
+        # 普通成员加入群的情况
+        notice_msg = (
+            f"【群成员增加通知】\n"
+            f"群号: {group_id}\n"
+            f"新成员: {user_id}\n"
+            f"操作人: {operator_id}\n"
+            f"加入方式: {sub_type}\n"
+        )
+
+    try:
+        await bot.send_group_msg(group_id=AUDIT_GROUP_ID, message=notice_msg)
+    except Exception as e:
+        logger.error(f"发送群成员增加通知消息失败: {e}")

@@ -9,7 +9,7 @@ from nonebot.params import CommandArg
 from nonebot.plugin import PluginMetadata
 from nonebot import get_plugin_config
 from typing import Optional, Tuple, List, Set
-from .rule import is_group_allowed, add_disabled_group, remove_disabled_group
+from .rule import is_group_allowed, add_abled_group, remove_abled_group
 
 __plugin_meta__ = PluginMetadata(
     name="whois查询",
@@ -23,8 +23,8 @@ __plugin_meta__ = PluginMetadata(
     - /whois <域名> -all: 查询完整的原始whois信息
     
     管理命令(仅超级用户):
-    - /禁止whois: 在当前群禁用whois功能
-    - /允许whois: 在当前群启用whois功能
+    - /启用whois: 在当前群启用whois功能
+    - /禁用whois: 在当前群禁用whois功能
     """,
     type="application",
     homepage="https://github.com/CG-Jue/NoneBotPlugins",
@@ -36,8 +36,8 @@ __plugin_meta__ = PluginMetadata(
 )
 
 # 添加权限控制命令，只允许超级用户使用
-disable_whois = on_regex(r"^/禁止\s*whois$", priority=5, permission=SUPERUSER)
-enable_whois = on_regex(r"^/允许\s*whois$", priority=5, permission=SUPERUSER)
+disable_whois = on_regex(r"^/禁用\s*whois$", priority=5, permission=SUPERUSER)
+enable_whois = on_regex(r"^/启用\s*whois$", priority=5, permission=SUPERUSER)
 
 # 原有的whois命令，添加权限检查rule
 whois_search = on_command('/whois', aliases={'/whois查询'}, priority=5, rule=is_group_allowed)
@@ -60,6 +60,9 @@ COMMON_TLDS = {
     # 常见多级域名
     "co.uk", "co.jp", "com.cn", "org.cn", "net.cn", "gov.cn", "ac.cn",
     "com.hk", "com.tw", "co.nz", "co.kr", "or.jp", "ac.jp", "ne.jp"
+
+    # 补充
+    "ci"
 }
 
 # 判断是否为有效的常见域名
@@ -160,8 +163,8 @@ async def handle_disable_whois(bot: Bot, event: Event):
                                  + MessageSegment.text("此命令仅在群聊中可用"))
         
     
-    # 添加到禁用列表
-    success = add_disabled_group(event.group_id)
+    # 从启用列表中移除
+    success = remove_abled_group(event.group_id)
     if success:
         await disable_whois.finish(MessageSegment.reply(event.message_id) 
                                  + MessageSegment.at(int(event.user_id))
@@ -180,8 +183,8 @@ async def handle_enable_whois(bot: Bot, event: Event):
                                 + MessageSegment.text("此命令仅在群聊中可用"))
         
     
-    # 从禁用列表中移除
-    success = remove_disabled_group(event.group_id)
+    # 添加到启用列表
+    success = add_abled_group(event.group_id)
     if success:
         await enable_whois.finish(MessageSegment.reply(event.message_id) 
                                 + MessageSegment.at(int(event.user_id))

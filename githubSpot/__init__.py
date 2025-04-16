@@ -16,21 +16,50 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-github = on_regex(r"https?://github\.com/([^/]+/[^/]+)", priority=10, block=False)
+# 使用改进的正则表达式匹配可能以 #/ 结尾的链接
+github = on_regex(r"https?://github\.com/([^/]+/[^/]+)(?:#/)?", priority=10, block=False)
 
-def match_link_parts(link):
-    pattern = r'https?://github\.com/([^/]+/[^/]+)'
-    match = re.search(pattern, link)
-    if match:
-        return match.group(0)
-    else:
-        return None
+# GitHub URL代理类 - 负责处理和清洗URL
+class GitHubUrlProxy:
+    def __init__(self):
+        self.pattern = r'https?://github\.com/([^/]+/[^/]+)(?:#/)?'
+    
+    def extract_url(self, text):
+        """从文本中提取GitHub URL并清洗"""
+        match = re.search(self.pattern, text)
+        if not match:
+            return None
+            
+        # 获取匹配的URL并移除#/后缀
+        full_url = match.group(0)
+        return full_url.split('#')[0]  # 移除#及其后面的内容
+    
+    async def get_card_info(self, url):
+        """代理方法，通过URL获取GitHub卡片信息"""
+        if not url:
+            return "获取信息失败"
+            
+        try:
+            return await get_github_reposity_information(url)
+        except Exception as e:
+            logger.error(f"获取GitHub信息时出错: {e}, URL: {url}")
+            return "获取信息失败"
+
+# 创建URL代理实例
+github_url_proxy = GitHubUrlProxy()
     
 @github.handle()
 async def github_handle(bot: Bot, event: GroupMessageEvent, state: T_State):
-    url = match_link_parts(event.get_plaintext())
-    imageUrl = await get_github_reposity_information(url)
-    assert(imageUrl != "获取信息失败")
+    # 通过代理提取和处理URL
+    url = github_url_proxy.extract_url(event.get_plaintext())
+    if not url:
+        return
+    
+    # 通过代理获取卡片信息
+    imageUrl = await github_url_proxy.get_card_info(url)
+    if imageUrl == "获取信息失败":
+        logger.error(f"获取GitHub信息失败，URL: {url}")
+        return
+        
     logger.debug(f"获取到的GitHub卡片url信息: {imageUrl}")
     await github.send(MessageSegment.image(imageUrl))
-    
