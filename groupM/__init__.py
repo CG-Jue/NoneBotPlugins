@@ -4,10 +4,12 @@
 2. 添加bot为好友
 3. 管理的群有人员变更
 4. 入群申请审核系统
+5. 设置群头衔功能
 '''
+from .function.groupOperation import *
 from nonebot import on_command, on_request, on_fullmatch, on_regex, on_notice, logger, get_driver
 from nonebot.adapters.onebot.v11 import Bot, GroupMessageEvent, GroupRequestEvent, FriendRequestEvent, MessageEvent, Message, MessageSegment
-from nonebot.adapters.onebot.v11 import GroupIncreaseNoticeEvent
+from nonebot.adapters.onebot.v11 import GroupIncreaseNoticeEvent, GroupDecreaseNoticeEvent, GroupBanNoticeEvent
 from nonebot.adapters.onebot.v11.permission import GROUP_ADMIN, GROUP_OWNER
 from nonebot.adapters.onebot.v11.event import Reply
 from nonebot.adapters.onebot.v11.message import MessageSegment as MS
@@ -16,13 +18,15 @@ from nonebot.permission import SUPERUSER
 from nonebot.typing import T_State
 from nonebot.plugin import PluginMetadata
 import re
+from nonebot.params import CommandArg
+from nonebot.rule import to_me
 import logging
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 import time
 import json
 import os
 import pathlib
-from .rule import checkIfWWD
+from .rule import *
 
 __plugin_meta__ = PluginMetadata(
     name="群组与好友管理",
@@ -34,7 +38,7 @@ __plugin_meta__ = PluginMetadata(
     - 查看所有审核：以合并转发方式显示所有待处理申请
     - /同意 [请求标识]：手动同意指定请求
     - /拒绝 [请求标识] [理由]：手动拒绝指定请求
-    
+    865行后为新增
     【审核流程】
     1. 收到入群申请/群聊邀请/好友申请时，消息会发送到审核群
     2. 管理员可通过回复原消息"同意"或"拒绝 理由"来处理
@@ -262,7 +266,7 @@ async def gr_(bot: Bot, matcher: Matcher, event: GroupRequestEvent):
             await matcher.send(f"发送审核消息失败，请管理员手动处理该入群申请")
 
 # 通过回复消息处理入群申请
-reply_handler = on_fullmatch("同意",rule=checkIfWWD,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2)
+reply_handler = on_fullmatch("同意",rule=check_if_group_is_admin,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2)
 
 @reply_handler.handle()
 async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
@@ -364,18 +368,18 @@ async def handle_reply(bot: Bot, event: GroupMessageEvent, matcher: Matcher):
             await matcher.send(f"处理请求失败: {e}")
 
 # 查看待处理的入群请求
-list_requests = on_command("查看入群审核", rule=checkIfWWD,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
+list_requests = on_command("查看入群审核", rule=check_if_group_is_admin,permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
 
 @list_requests.handle()
 async def handle_list_requests(bot: Bot, event: MessageEvent, matcher: Matcher):
     # 如果是群聊，检查是否在审核群
-    if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
-        await matcher.send("此命令只能在指定的审核群中使用")
-        return
+    # if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
+    #     await matcher.send("此命令只能在指定的审核群中使用")
+    #     return
     
     if not pending_requests:
-        await matcher.send("当前没有待处理的入群请求")
-        return
+        await matcher.finish("当前没有待处理的入群请求")
+        
     
     msg = "待处理的入群请求列表：\n\n"
     
@@ -393,14 +397,14 @@ async def handle_list_requests(bot: Bot, event: MessageEvent, matcher: Matcher):
     await matcher.send(msg)
 
 # 查看待处理的好友请求
-list_friend_requests = on_command("查看好友审核", rule=checkIfWWD, permission=SUPERUSER, priority=2, block=True)
+list_friend_requests = on_command("查看好友审核", rule=check_if_group_is_admin, permission=SUPERUSER, priority=2, block=True)
 
 @list_friend_requests.handle()
 async def handle_list_friend_requests(bot: Bot, event: MessageEvent, matcher: Matcher):
     # 如果是群聊，检查是否在审核群
-    if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
-        await matcher.send("此命令只能在指定的审核群中使用")
-        return
+    # if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
+    #     await matcher.send("此命令只能在指定的审核群中使用")
+    #     return
     
     if not pending_friend_requests:
         await matcher.send("当前没有待处理的好友请求")
@@ -421,7 +425,7 @@ async def handle_list_friend_requests(bot: Bot, event: MessageEvent, matcher: Ma
     await matcher.send(msg)
 
 # 查看所有待处理请求（使用合并转发）
-list_all_requests = on_command("查看所有审核", rule=checkIfWWD, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
+list_all_requests = on_command("查看所有审核", rule=check_if_group_is_admin, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
 
 @list_all_requests.handle()
 async def handle_list_all_requests(bot: Bot, event: MessageEvent, matcher: Matcher):
@@ -601,14 +605,13 @@ async def fr_(bot: Bot, matcher: Matcher, event: FriendRequestEvent):
         await matcher.send(f"发送好友审核消息失败，请管理员手动处理该好友申请")
 
 # 手动同意请求（通过请求标识）
-manual_approve = on_command("/同意", rule=checkIfWWD, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
+manual_approve = on_command("/同意", rule=check_if_group_is_admin, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
 
 @manual_approve.handle()
 async def handle_manual_approve(bot: Bot, event: MessageEvent, matcher: Matcher, state: T_State):
     # 如果是群聊，检查是否在审核群
-    if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
-        await matcher.send("此命令只能在指定的审核群中使用")
-        return
+    # if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
+    #     return
     
     # 获取参数（请求标识）
     args = str(event.message).strip().split(" ", 1)
@@ -680,14 +683,13 @@ async def handle_manual_approve(bot: Bot, event: MessageEvent, matcher: Matcher,
         await matcher.send(f"处理请求失败: {e}")
 
 # 手动拒绝请求（通过请求标识）
-manual_reject = on_command("/拒绝", rule=checkIfWWD, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
+manual_reject = on_command("/拒绝", rule=check_if_group_is_admin, permission=SUPERUSER | GROUP_ADMIN | GROUP_OWNER, priority=2, block=True)
 
 @manual_reject.handle()
 async def handle_manual_reject(bot: Bot, event: MessageEvent, matcher: Matcher, state: T_State):
     # 如果是群聊，检查是否在审核群
-    if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
-        await matcher.send("此命令只能在指定的审核群中使用")
-        return
+    # if isinstance(event, GroupMessageEvent) and event.group_id != AUDIT_GROUP_ID:
+    #     return
     
     # 获取参数（请求标识和拒绝理由）
     message_text = str(event.message).strip()
@@ -761,25 +763,36 @@ async def handle_manual_reject(bot: Bot, event: MessageEvent, matcher: Matcher, 
         await matcher.send(f"处理请求失败: {e}")
 
 # 处理群成员增加通知事件
-group_increase_notice = on_notice(priority=2, block=True)
+group_increase_notice = on_notice(priority=2, block=True, rule=check_if_group_not_true)
 
 @group_increase_notice.handle()
 async def handle_group_increase_notice(bot: Bot, event: GroupIncreaseNoticeEvent):
     group_id = event.group_id
     user_id = event.user_id
+    notice_type = event.notice_type
     sub_type = event.sub_type
     operator_id = getattr(event, 'operator_id', None)
     
+    # 入群通知
+    if user_id == event.self_id:
     # 判断是否为机器人被邀请进群的情况
-    if sub_type == "invite" and user_id == event.self_id:
-        # 发送通知消息到审核群
-        notice_msg = (
-            f"【机器人被邀请入群通知】\n"
-            f"机器人已被 {operator_id} 邀请加入群 {group_id}\n"
-            f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        )
+        if sub_type == "invite":
+            # 被邀请
+            notice_msg = (
+                f"【机器人被邀请入群通知】\n"
+                f"机器人已被 {operator_id} 邀请加入群 {group_id}\n"
+                f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+        elif sub_type == "approve":
+            # 被审核入群
+                notice_msg = (
+                f"【机器人已被审核入群通知】\n"
+                f"机器人已被 {operator_id} 审核加入群 {group_id}\n"
+                f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
     else:
-        # 普通成员加入群的情况
+        # 普通成员增加群的情况
+        sub_type = "审核同意" if sub_type == "approve" else "直接邀请"
         notice_msg = (
             f"【群成员增加通知】\n"
             f"群号: {group_id}\n"
@@ -787,8 +800,159 @@ async def handle_group_increase_notice(bot: Bot, event: GroupIncreaseNoticeEvent
             f"操作人: {operator_id}\n"
             f"加入方式: {sub_type}\n"
         )
+        await 连坐链子(group_id, operator_id, user_id)  # 连坐链子
+        # 入群欢迎功能
+        # await bot.send_group_msg(group_id=AUDIT_GROUP_ID, # AUDIT_GROUP_ID修改为实际群
+        #                          message=MessageSegment.at(int(event.user_id))
+        #                   + MessageSegment.text(" 欢迎"))
 
     try:
         await bot.send_group_msg(group_id=AUDIT_GROUP_ID, message=notice_msg)
     except Exception as e:
         logger.error(f"发送群成员增加通知消息失败: {e}")
+
+
+# 处理群成员减少通知事件
+group_decrease_notice = on_notice(priority=2, block=True, rule=check_if_group_not_true)
+
+@group_decrease_notice.handle()
+async def handle_group_increase_notice(bot: Bot, event: GroupDecreaseNoticeEvent):
+    group_id = event.group_id
+    user_id = event.user_id
+    sub_type = event.sub_type
+    operator_id = getattr(event, 'operator_id', None)
+
+    # 退群通知
+    if user_id == event.self_id:
+        if sub_type == 'kick_me': 
+
+            notice_msg = (
+                f"【机器人被移出群通知】\n"
+                f"机器人已被 {operator_id} 移出群 {group_id}\n"
+                f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+        elif sub_type == 'leave': 
+            notice_msg = (
+                f"【机器人退出群通知】\n"
+                f"机器人已退出群 {group_id}\n"
+                f"时间: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
+    else:
+        # 普通成员减少群的情况
+        if sub_type == "kick":
+            # 当bot踢人时，operator_id为0
+            operator_id = "BOT" if int(operator_id) == 0 else operator_id
+            notice_msg = (
+                f"【群成员被移除通知】\n"
+                f"群号: {group_id}\n"
+                f"成员: {user_id}\n"
+                f"操作人: {operator_id}\n"
+            )
+        elif sub_type == "leave":
+                notice_msg = (
+                f"【群成员退群通知】\n"
+                f"群号: {group_id}\n"
+                f"成员: {user_id}\n"
+            )
+
+    try:
+        await bot.send_group_msg(group_id=AUDIT_GROUP_ID, message=notice_msg)
+    except Exception as e:
+        logger.error(f"发送群成员减少通知消息失败: {e}")
+
+
+
+主动设置群头衔 = on_command("设置头衔", 
+                             rule=check_if_bot_is_owner & to_me(), 
+                             priority=2)
+
+主动撤回群消息 = on_command("撤回", 
+                            rule=check_if_bot_is_owner_or_admin, 
+                            permission=GROUP_ADMIN | GROUP_ADMIN| SUPERUSER, 
+                            priority=2)
+
+连坐踢出群 = on_command("lz踢出",
+                            rule=check_if_bot_is_owner_or_admin, 
+                            permission=GROUP_ADMIN | GROUP_ADMIN| SUPERUSER, 
+                            priority=2)
+
+@连坐踢出群.handle()
+async def lzkick(event: GroupMessageEvent, args: Message = CommandArg()):
+    '''
+    连坐踢出群聊
+    '''
+    gid = event.group_id
+    uid = event.user_id
+    uid_list = []
+    uid_list = await 获取连坐链子(gid, uid)
+    black = True if args.extract_plain_text() == '拉黑' else False
+
+    await 踢出(gid, uid_list, black)
+
+
+
+@主动撤回群消息.handle()
+async def handle_ban_user(event: GroupMessageEvent):
+
+    '''
+    主动撤回群消息
+    '''
+    gid = event.group_id
+    if not event.reply:
+        await 主动撤回群消息.finish("撤回什么？👀")
+    msgid = event.reply.message_id
+    uid = event.reply.user_id
+    role = await 查找用户角色(gid, uid)
+    if role == "owner":
+        await 主动撤回群消息.finish("群主的消息也想撤？作死别带上我😠")
+
+    try:
+        await 撤回消息(msgid)
+        await 主动撤回群消息.send("哦了👌")
+    except:
+        await 主动撤回群消息.finish("为什么撤不了？你让我撤了什么东西？😱")
+
+@主动设置群头衔.handle()
+async def handle_set_title(bot: Bot, event: GroupMessageEvent, args: Message = CommandArg()):
+    '''
+    主动设置群头衔
+    '''
+    uid = event.user_id
+    gid = event.group_id
+    title = args.extract_plain_text()
+    if not title:
+        text = "你这样让我设置个damn！"
+        character = "lucy-voice-suxinjiejie" # 酥心御姐
+        # character = "lucy-voice-xueling" # 元气少女
+        # character = "lucy-voice-female1" # 邻家小妹
+        # await 主动设置群头衔.finish(text)
+        await AI语音(gid, character, text)
+        return # 阻断
+
+    try:
+        # 设置群头衔
+        await 设置群头衔(gid,uid,title)
+        await 主动设置群头衔.send(f"已为您设置群头衔：{title}")
+    except Exception as e:
+        logger.error(f"设置群头衔失败: {e}")
+
+
+
+'''
+被动撤回消息/被动禁言
+on_regex()
+正则匹配违禁词，不想弄
+
+'''
+
+
+demo = on_command("/获取链子",rule=to_me(), permission=SUPERUSER, priority=2, block=True)
+@demo.handle()
+async def demo_(bot: Bot, event: MessageEvent, matcher: Matcher):
+    gid = event.group_id
+    uid = event.user_id
+    data = await 获取连坐链子(gid, uid)
+
+    logger.debug(f"获取连坐链子: {data}")
+
+
