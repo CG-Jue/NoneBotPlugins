@@ -16,13 +16,14 @@ __plugin_meta__ = PluginMetadata(
 )
 
 
-# 使用改进的正则表达式匹配可能以 #/ 结尾的链接
-github = on_regex(r"https?://github\.com/([^/]+/[^/]+)(?:#/)?", priority=10, block=False)
+# 使用改进的正则表达式匹配可能以 #/ 结尾的链接，并且在遇到换行符时停止匹配
+github = on_regex(r"https?://github\.com/([^/\n]+/[^/\n\s]+)(?:#/)?", priority=10, block=False)
 
 # GitHub URL代理类 - 负责处理和清洗URL
 class GitHubUrlProxy:
     def __init__(self):
-        self.pattern = r'https?://github\.com/([^/]+/[^/]+)(?:#/)?'
+        # 修改正则表达式，确保不会跨越换行符
+        self.pattern = r'https?://github\.com/([^/\n]+/[^/\n\s]+)(?:#/)?'
     
     def extract_url(self, text):
         """从文本中提取GitHub URL并清洗"""
