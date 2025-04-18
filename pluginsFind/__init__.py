@@ -6,6 +6,8 @@ from nonebot import on_command
 from nonebot.params import CommandArg
 from typing import Dict, List, Optional, Tuple, Set
 import os
+from nonebot.rule import to_me
+
 from pathlib import Path
 from nonebot.permission import SUPERUSER
 
@@ -77,7 +79,7 @@ __plugin_meta__ = PluginMetadata(
 HIDDEN_PLUGINS_FILE = Path(os.path.dirname(os.path.abspath(__file__))) / "hidden_plugins.txt"
 
 # 命令注册
-findplugins = on_command("/菜单", priority=1, block=True)
+findplugins = on_command("/菜单", priority=1, block=True, rule=to_me())
 hide_plugin = on_command("/屏蔽插件", permission=SUPERUSER, priority=1, block=True)
 show_plugin = on_command("/取消屏蔽", permission=SUPERUSER, priority=1, block=True)
 
